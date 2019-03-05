@@ -74,26 +74,23 @@ namespace ClonePlayground
 
         private void Benchmark(string name, int iterations, Action action)
         {
-            long peakMemory = 0;
+            GC.Collect();
             var stopwatch = new Stopwatch();
+            stopwatch.Start();
+
+            Parallel.For(0, iterations, (i) =>
+            {
+                action();
+            });
+
+            stopwatch.Stop();
+
+            Console.WriteLine($"\t{name}: Completed {iterations} iterations in {stopwatch.Elapsed}.");
+            Console.WriteLine($"\t\t{iterations / stopwatch.Elapsed.TotalSeconds} iterations/sec;");
 
             using (var process = Process.GetCurrentProcess())
             {
-                GC.Collect();
-                peakMemory = process.PrivateMemorySize64;
-                stopwatch.Start();
-
-                Parallel.For(0, iterations, (i) =>
-                {
-                    action();
-                    peakMemory = Math.Max(peakMemory, process.PrivateMemorySize64);
-                });
-
-                stopwatch.Stop();
-
-                Console.WriteLine($"\t{name}: Completed {iterations} iterations in {stopwatch.Elapsed}.");
-                Console.WriteLine($"\t\t{iterations / stopwatch.Elapsed.TotalSeconds} iterations/sec;");
-                Console.WriteLine($"\t\t{(peakMemory) / 1024 / 1024} MB peak memory allocation");
+                Console.WriteLine($"\t\t{process.PeakWorkingSet64 / 1024 / 1024} MB peak working set");
             }
         }
 
