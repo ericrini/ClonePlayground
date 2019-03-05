@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using Force.DeepCloner;
 using Itron.Platform.Dynamic;
 using Newtonsoft.Json;
@@ -21,36 +22,18 @@ namespace ClonePlayground
 
             var program = new Program();
             var source = program.CreateDynamicObject(propertiesPerLevel, totalLevels, leafSizeInBytes);
+
             program.TestNewtonsoftJsonConvert(source, iterations);
-            program.TestNewtonsoftJsonStream(source, iterations);
             program.TestNewtonsoftBsonStream(source, iterations);
             program.TestDeepCloner(source, iterations);
-            //program.TestFastDeepCloner(source, iterations);
         }
 
         public void TestNewtonsoftJsonConvert(DynamicObject source, int iterations)
         {
-            Benchmark("NewtonsoftJsonConvert", iterations, () =>
+            Benchmark("Newtonsoft-JsonConvert", iterations, () =>
             {
-                JsonConvert.DeserializeObject<DynamicObject>(JsonConvert.SerializeObject(source));
-            });
-        }
-
-        public void TestNewtonsoftJsonStream(DynamicObject source, int iterations)
-        {
-            var serializer = new JsonSerializer();
-
-            Benchmark("NewtonsoftJsonStream", iterations, () =>
-            {
-                using (var memoryStream = new MemoryStream())
-                using (var streamWriter = new StreamWriter(memoryStream))
-                using (var textWriter = new JsonTextWriter(streamWriter))
-                {
-                    serializer.Serialize(textWriter, source);
-                    var streamReader = new StreamReader(memoryStream);
-                    var textReader = new JsonTextReader(streamReader);
-                    serializer.Deserialize<DynamicObject>(textReader);
-                }
+                string serialized = JsonConvert.SerializeObject(source);
+                JsonConvert.DeserializeObject<DynamicObject>(serialized);
             });
         }
 
@@ -58,14 +41,17 @@ namespace ClonePlayground
         {
             var serializer = new JsonSerializer();
 
-            Benchmark("NewtonsoftBsonStream", iterations, () =>
+            Benchmark("Newtonsoft-BsonStreaming", iterations, () =>
             {
                 using (var stream = new MemoryStream())
-                using (var writer = new BsonDataWriter(stream))
-                using (var reader = new BsonDataReader(stream))
                 {
-                    serializer.Serialize(writer, source);
-                    serializer.Deserialize<DynamicObject>(reader);
+                    using (var writer = new BsonDataWriter(stream))
+                    using (var reader = new BsonDataReader(stream))
+                    {
+                        serializer.Serialize(writer, source);
+                        stream.Position = 0;
+                        serializer.Deserialize<DynamicObject>(reader);
+                    }
                 }
             });
         }
@@ -88,16 +74,27 @@ namespace ClonePlayground
 
         private void Benchmark(string name, int iterations, Action action)
         {
+            long peakMemory = 0;
             var stopwatch = new Stopwatch();
-            stopwatch.Start();
 
-            for (int i = 0; i < iterations; i++)
+            using (var process = Process.GetCurrentProcess())
             {
-                action();
-            }
+                GC.Collect();
+                peakMemory = process.PrivateMemorySize64;
+                stopwatch.Start();
 
-            stopwatch.Stop();
-            Console.WriteLine($"\t{name}: {stopwatch.Elapsed}");
+                Parallel.For(0, iterations, (i) =>
+                {
+                    action();
+                    peakMemory = Math.Max(peakMemory, process.PrivateMemorySize64);
+                });
+
+                stopwatch.Stop();
+
+                Console.WriteLine($"\t{name}: Completed {iterations} iterations in {stopwatch.Elapsed}.");
+                Console.WriteLine($"\t\t{iterations / stopwatch.Elapsed.TotalSeconds} iterations/sec;");
+                Console.WriteLine($"\t\t{(peakMemory) / 1024 / 1024} MB peak memory allocation");
+            }
         }
 
         private DynamicObject CreateDynamicObject(int propertiesPerLevel, int totalLevels, int leafSizeInBytes)
